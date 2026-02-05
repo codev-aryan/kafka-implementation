@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <arpa/inet.h>
+#include <string>
 
 class ByteBuf {
 public:
@@ -34,6 +35,50 @@ public:
         reader_index_ += 4;
         return static_cast<int32_t>(ntohl(val));
     }
+    
+    int8_t readInt8() {
+         if (reader_index_ + 1 > data_.size()) {
+            throw std::out_of_range("Not enough bytes to read Int8");
+        }
+        return static_cast<int8_t>(data_[reader_index_++]);
+    }
+
+    uint32_t readUnsignedVarint() {
+        uint32_t value = 0;
+        int shift = 0;
+        while (true) {
+            if (reader_index_ >= data_.size()) {
+                throw std::out_of_range("Not enough bytes to read Varint");
+            }
+            uint8_t b = data_[reader_index_++];
+            value |= (static_cast<uint32_t>(b & 0x7F) << shift);
+            if ((b & 0x80) == 0) break;
+            shift += 7;
+        }
+        return value;
+    }
+
+    // Standard string (int16 length prefix)
+    void skipString() {
+        int16_t len = readInt16();
+        if (len > 0) {
+            if (reader_index_ + len > data_.size()) throw std::out_of_range("String buffer overflow");
+            reader_index_ += len;
+        }
+    }
+
+    std::string readCompactString() {
+        uint32_t len = readUnsignedVarint();
+        if (len == 0) return ""; 
+        // Compact string length is N + 1
+        uint32_t str_len = len - 1;
+        if (reader_index_ + str_len > data_.size()) {
+             throw std::out_of_range("Compact String buffer overflow");
+        }
+        std::string s(reinterpret_cast<const char*>(&data_[reader_index_]), str_len);
+        reader_index_ += str_len;
+        return s;
+    }
 
     // --- Write Methods ---
 
@@ -53,16 +98,25 @@ public:
         data_.insert(data_.end(), ptr, ptr + 4);
     }
     
-    // For this stage, we only need to write simple Unsigned Varints (0-127)
-    // which map 1:1 to a single byte.
+    void writeBool(bool val) {
+        writeInt8(val ? 1 : 0);
+    }
+    
     void writeUnsignedVarint(uint32_t val) {
-         // Full LEB128 implementation not needed for small constants (0, 2)
-         // but good to be safe for small values.
          while ((val & 0xffffff80) != 0L) {
              data_.push_back(static_cast<uint8_t>((val & 0x7f) | 0x80));
              val >>= 7;
          }
          data_.push_back(static_cast<uint8_t>(val & 0x7f));
+    }
+
+    void writeCompactString(const std::string& str) {
+        writeUnsignedVarint(str.length() + 1);
+        data_.insert(data_.end(), str.begin(), str.end());
+    }
+
+    void writeUUID(const uint8_t* uuid) {
+        data_.insert(data_.end(), uuid, uuid + 16);
     }
 
     const std::vector<uint8_t>& data() const {
