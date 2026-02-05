@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <stdexcept>
 #include <cstring>
+#include <thread> // Added for concurrency
 
 TcpServer::TcpServer(int port) : port(port) {
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -12,7 +13,7 @@ TcpServer::TcpServer(int port) : port(port) {
         throw std::runtime_error("Failed to create server socket");
     }
 
-    // Set SO_REUSEADDR to avoid 'Address already in use' errors during restarts
+    // Set SO_REUSEADDR to avoid 'Address already in use' errors
     int reuse = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
         close(server_fd);
@@ -54,9 +55,10 @@ void TcpServer::start() {
 
         std::cout << "Client connected\n";
         
-        // In a real server, we might spawn a thread here. 
-        // For now, we handle it synchronously.
-        Connection connection(client_fd);
-        connection.handle();
+        // Spawn a new thread to handle the client connection asynchronously
+        std::thread([client_fd]() {
+            Connection connection(client_fd);
+            connection.handle();
+        }).detach();
     }
 }
